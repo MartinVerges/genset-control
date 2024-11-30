@@ -1,0 +1,48 @@
+
+# General files
+.DS_Store
+Thumbs.db
+
+# PlatformIO specific
+/.pio/
+/.vscode/
+/c_cpp_properties.json
+/.clangd
+*.elf
+*.map
+*.bin
+*.hex
+*.ini.save
+
+# Build output directories
+/build/
+/lib/
+
+# Logs
+*.log
+
+# OS generated files
+*.swp
+*.swo
+*.bak
+*.tmp
+*.temp
+*.~*~
+*.orig
+*.patch
+
+# Python bytecode
+*.pyc
+__pycache__/
+
+# Arduino libraries
+*.zip
+*.tar.gz
+
+# Certificates and sensitive data
+*.pem
+*.crt
+*.key
+*.der
+*.p12
+wifi_credentials.h
