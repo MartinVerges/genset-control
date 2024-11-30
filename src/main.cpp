@@ -1,3 +1,11 @@
+/**
+ * Genset control
+ * (c) 2024 Martin Verges
+ *
+ * Licensed under CC BY-NC-SA 4.0
+ * (Attribution-NonCommercial-ShareAlike 4.0 International)
+**/
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
