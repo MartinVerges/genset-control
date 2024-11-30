@@ -15,6 +15,10 @@
 #define START_SIGNAL 26
 #define STOP_SIGNAL 27
 
+// Predefined Settings
+const char* WIFI_SOFTAP_SSID = "Genset Control";
+const char* WIFI_SOFTAP_PASS = "";
+
 // Create the WiFi Manager instance
 WIFIMANAGER WifiManager;
 
@@ -34,6 +38,7 @@ AsyncWebServer webServer(80);
 bool lastStartState = LOW; // Initial state for START signal - request to start up the Generator
 bool lastStopState = LOW;  // Initial state for STOP signal - request to stop the Generator
 bool runningState = LOW;   // Initial state for RUNNING signal - status if the Generator is running
+bool ledState = LOW;       // Initial state for LED
 
 // Define maximum number of log entries
 const size_t LOG_BUFFER_MAX_SIZE = 100;
@@ -64,11 +69,10 @@ void logMessage(const String& message) {
 void setupWiFi() {
   logMessage("Starting WiFi Manager...");
 
-  // Configure the default AP for the WiFi Manager
-  WifiManager.addWifi("Verges", "WeAreFamily");
+  WifiManager.configueSoftAp(WIFI_SOFTAP_SSID, WIFI_SOFTAP_PASS);
+  WifiManager.fallbackToSoftAp(true);       // Run a SoftAP if no known AP can be reached
 
   WifiManager.startBackgroundTask();        // Run the background task to take care of our Wifi
-  WifiManager.fallbackToSoftAp(true);       // Run a SoftAP if no known AP can be reached
   WifiManager.attachWebServer(&webServer);  // Attach our API to the Webserver 
 }
 
@@ -229,15 +233,16 @@ void IRAM_ATTR receiveRunningSignal() {
   logMessage("Current running signal: " + String(runningState));
 }
 
+void IRAM_ATTR receiveLEDStatus() {
+  ledState = digitalRead(LED);
+  logMessage("Current LED state: " + String(ledState));
+}
+
 void setup() {
   // Initialize serial monitor
   Serial.begin(115200);
+  logMessage("Initializing...");
   
-  // Initialize all relays and LED
-  digitalWrite(RELAY_K1, LOW);
-  digitalWrite(RELAY_K2, LOW);
-  digitalWrite(LED, LOW);
-
   // Configure pins
   pinMode(RELAY_K1, OUTPUT);
   pinMode(RELAY_K2, OUTPUT);
@@ -246,27 +251,22 @@ void setup() {
   pinMode(STOP_SIGNAL, INPUT_PULLDOWN);
   pinMode(RUNNING_SIGNAL, INPUT_PULLDOWN);
 
+  // Initialize all relays and LED
+  digitalWrite(RELAY_K1, LOW);
+  digitalWrite(RELAY_K2, LOW);
+  digitalWrite(LED, LOW);
+
   attachInterrupt(RUNNING_SIGNAL, receiveRunningSignal, CHANGE);
+  attachInterrupt(LED, receiveLEDStatus, CHANGE);
 
   // Make sure we can persist the configuration into the NVS (Non Volatile Storage)
   if (!LittleFS.begin(true)) {
-    Serial.println("[ERROR] Unable to open spiffs partition or run LittleFS");
+    logMessage("[ERROR] Unable to open spiffs partition or run LittleFS");
     ESP.deepSleep(15 * 1000 * 1000); // 15 seconds deepSleep then retry
   }
 
-  // Boot sequence
   logMessage("Booting...");
-  for (int i = 0; i < 6; i++) {
-    auto delay = 25 + i * 250;
-    event_loop.onDelay(delay, []() { 
-      if(digitalRead(LED) == LOW) {
-        digitalWrite(LED, HIGH); 
-      } else {
-        digitalWrite(LED, LOW); 
-      }
-    });
-  }
-
+  
   // Start WiFi Manager
   setupWiFi();
 
@@ -276,6 +276,18 @@ void setup() {
   // Check for START/STOP signals every 50ms
   event_loop.onDelay(5, receiveRunningSignal);
   event_loop.onRepeat(50, checkForSignals);
+  
+  // Boot sequence
+  for (int i = 0; i < 6; i++) {
+    auto delay = 100 + i * 500;
+    event_loop.onDelay(delay, []() { 
+      if(digitalRead(LED) == LOW) {
+        digitalWrite(LED, HIGH); 
+      } else {
+        digitalWrite(LED, LOW); 
+      }
+    });
+  }
 }
 
 void loop() {
