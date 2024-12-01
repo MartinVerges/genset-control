@@ -9,10 +9,12 @@ In my case, I use it to start and stop a Cummins Onan MDKDR in my Boat.
 
 ## Prerequisites
 
-- ESP32 Relais 2 Channel Modul [LC-Relay-ESP32-2R-D5](https://www.amazon.de/dp/B0CYSMFB49) from [OEM](http://www.chinalctech.com/cpzx/Programmer/Relay_Module/518.html)
 - Generator to control using dedicated START and STOP relays
 - For Cummins Onan MDKDR connection a [Deutsch 8-pin connector](https://www.amazon.de/dp/B0CQR1GXSV)
 - Resistor and 3.3V Zener diode to limit the generator running signal
+- ESP32 Relais 2 Channel Modul [LC-Relay-ESP32-2R-D5](https://www.amazon.de/dp/B0CYSMFB49) from [OEM](http://www.chinalctech.com/cpzx/Programmer/Relay_Module/518.html)
+
+![Picture of the 2 Channel Relais Board](docs/LC-Relay-ESP32-2R-D5.png)
 
 ## Required connections
 
