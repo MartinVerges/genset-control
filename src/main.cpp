@@ -13,7 +13,7 @@
 #include <deque>
 #include <string>
 #include <ReactESP.h>
-#include <LittleFS.h>
+#include <Preferences.h>
 
 // Pin definitions
 #define RELAY_K1 16
@@ -24,11 +24,24 @@
 #define STOP_SIGNAL 27
 
 // Predefined Settings
-const char* WIFI_SOFTAP_SSID = "Genset Control";
-const char* WIFI_SOFTAP_PASS = "";
+const char* NVS_GENSET_CONTROL = "Genset";        // Name of the NVS namespace
+const char* WIFI_SOFTAP_SSID = "Genset Control";  // Default name of the SoftAP
+const char* WIFI_SOFTAP_PASS = "";                // Default password of the SoftAP
+
+void logMessage(const String& message);
 
 // Create the WiFi Manager instance
-WIFIMANAGER WifiManager;
+class MyWifiManager : public WIFIMANAGER {
+protected:
+    void logMessage(String message) override {
+        ::logMessage(message);
+    }
+};
+MyWifiManager WifiManager;
+
+
+// Create the NVS instance
+Preferences preferences;
 
 // Configurable durations (default values)
 // defines how long the Relay should be turned on
@@ -47,6 +60,7 @@ bool lastStartState = LOW; // Initial state for START signal - request to start 
 bool lastStopState = LOW;  // Initial state for STOP signal - request to stop the Generator
 bool runningState = LOW;   // Initial state for RUNNING signal - status if the Generator is running
 bool ledState = LOW;       // Initial state for LED
+bool allowStart = true;    // Allow the generator to start
 
 // Define maximum number of log entries
 const size_t LOG_BUFFER_MAX_SIZE = 100;
@@ -60,7 +74,10 @@ EventLoop event_loop;
 
 
 // Function to log messages
-void logMessage(const String& message) {
+void logMessage(const String& msg) {
+  // remove unnecessary newlines
+  auto message = msg.endsWith("\n") ? msg.substring(0, msg.length() - 1) : msg;
+
   // Add the new message to the buffer
   logBuffer.push_back(message);
 
@@ -75,7 +92,7 @@ void logMessage(const String& message) {
 
 // WiFi connection setup
 void setupWiFi() {
-  logMessage("Starting WiFi Manager...");
+  logMessage("[WIFI] Starting WiFi Manager...");
 
   WifiManager.configueSoftAp(WIFI_SOFTAP_SSID, WIFI_SOFTAP_PASS);
   WifiManager.fallbackToSoftAp(true);       // Run a SoftAP if no known AP can be reached
@@ -84,30 +101,74 @@ void setupWiFi() {
   WifiManager.attachWebServer(&webServer);  // Attach our API to the Webserver 
 }
 
+// Set whether the generator is allowed to start.
+//
+// This setting is stored in the non-volatile storage (NVS)
+//
+// @param state Whether the generator is allowed to start.
+// @return true if the setting was successfully written to NVS.
+bool setAllowStart(bool state) {
+  if (preferences.begin(NVS_GENSET_CONTROL, false)) {
+    bool success = preferences.putBool("allowStart", state);
+    logMessage("[NVS] Start allowance set to " + String(state));
+    allowStart = state;
+    preferences.end();
+    return success;
+  } else {
+    return false;
+  }
+}
+
+  /**
+   * Gets whether the generator is allowed to start from NVS, setting the 
+   * global allowStart variable to the result and returning it.
+   *
+   * @return true if the generator is allowed to start, false otherwise
+   */
+bool getAllowStart() {
+  if (preferences.begin(NVS_GENSET_CONTROL, true)) {
+    allowStart = preferences.getBool("allowStart", true);
+    logMessage("[NVS] Loaded start allowance from NVS: " + String(allowStart));
+    preferences.end();
+    return allowStart;
+  } else {
+    return false;
+  }
+}
+
+
 // Start the generator by turning on the K1 relay for the configured duration
 void startGenerator() {
-  bool currentStopState = digitalRead(RELAY_K2);
-  if (currentStopState == HIGH) {
-    logMessage("Generator is currently shutting down. Ignoring START signal");
+  if (allowStart == false) {
+    logMessage("[CONTROL] Generator is not allowed to start. Ignoring START signal");
     return;
   }
-  logMessage("Starting generator...");
+  bool currentStopState = digitalRead(RELAY_K2);
+  if (currentStopState == HIGH) {
+    logMessage("[CONTROL] Generator is currently shutting down. Ignoring START signal");
+    return;
+  }
+  logMessage("[CONTROL] Starting generator...");
   digitalWrite(RELAY_K1, HIGH); // Turn on K1 relay
   event_loop.onDelay(powerUpDuration, []() {
     digitalWrite(RELAY_K1, LOW);  // Turn off K1 relay
-    logMessage("Generator started");
+    logMessage("[CONTROL] Generator started");
   });
+  digitalWrite(LED, HIGH);
+  event_loop.onDelay(2500, []() { digitalWrite(LED, LOW); });
 }
 
 // Stop the generator by turning on the K2 relay for the configured duration
 void stopGenerator() {
-  logMessage("Stopping generator...");
+  logMessage("[CONTROL] Stopping generator...");
   digitalWrite(RELAY_K2, HIGH); // Turn on K2 relayy
   digitalWrite(RELAY_K1, LOW);  // Turn off K1 relay (in case it was on)
   event_loop.onDelay(powerDownDuration, []() {
     digitalWrite(RELAY_K2, LOW);  // Turn off K2 relay
-    logMessage("Generator stopped");
+    logMessage("[CONTROL] Generator stopped");
   });
+  digitalWrite(LED, HIGH);
+  event_loop.onDelay(2500, []() { digitalWrite(LED, LOW); });
 }
 
 // Setup web server
@@ -122,31 +183,72 @@ void setupWebServer() {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Genset Control</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-        }
-        .log-box {
-            width: 100%;
-            max-width: 600px;
-            height: 300px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            padding: 10px;
-            background-color: #f9f9f9;
-            overflow-y: scroll;
-            font-family: monospace;
-            white-space: pre-wrap;
-        }
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+      }
+      .logbox {
+        width: 100%;
+        max-width: 900px;
+        height: 300px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        padding: 10px;
+        background: #f9f9f9;
+        overflow-y: auto;
+        font-family: monospace;
+        white-space: pre-wrap;
+      }
+      button {
+        background: #4CAF50;
+        color: #fff;
+        border: none;
+        border-radius: 4px;
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+        transition: 0.3s;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+      button:hover {
+        background: #45a049;
+        box-shadow: 0 6px 10px rgba(0, 0, 0, 0.15);
+        transform: translateY(-2px);
+      }
+      button:disabled, button[disabled] {
+        background-color: #cccccc;
+        color: #666666;
+      }
+      .red {
+        background: #f44336;
+      }
+      .red:hover {
+        background: #e53935;
+      }
     </style>
 </head>
 <body>
-  <h1>ESP32 Control Panel</h1>
+  <h1>Genset Control</h1>
   <h2>Controls</h2>
+)html";
+    if (!allowStart) {
+      html += R"html(
+  <button disabled>Start Generator</button>
+  <button disabled>Stop Generator</button>
+  <h2>Settings</h2>
+  <button onclick="fetch('/allowStart').then(() => location.reload())">Startup disabled<br>click to enable</button>
+)html";
+    } else {
+      html += R"html(
   <button onclick="fetch('/start').then(() => location.reload())">Start Generator</button>
   <button onclick="fetch('/stop').then(() => location.reload())">Stop Generator</button>
+  <h2>Settings</h2>
+  <button class="red" onclick="fetch('/disallowStart').then(() => location.reload())">Startup enabled<br>click to disable</button>
+)html";
+    }
+    html += R"html(
   <h2>Log</h2>
-  <div class="log-box" id="logBox">loading...</div>
+  <div class="logbox" id="logBox">loading...</div>
   <script>
     function updateLogBox() {
       fetch('/log')
@@ -163,11 +265,25 @@ void setupWebServer() {
     request->send(200, "text/html", html);
   });
 
+  webServer.on("/allowStart", HTTP_GET, [](AsyncWebServerRequest* request) {
+    setAllowStart(true);
+    request->send(200, "text/plain", "Startup enabled");
+  });
+
+  webServer.on("/disallowStart", HTTP_GET, [](AsyncWebServerRequest* request) {
+    setAllowStart(false);
+    stopGenerator();
+    request->send(200, "text/plain", "Startup disabled");
+  });
+
   webServer.on("/log", HTTP_GET, [](AsyncWebServerRequest* request) {
     String html = "";
     // Display log entries
-    for (const auto& logEntry : logBuffer) {
-      html += logEntry + "\n";
+    //for (const auto& logEntry : logBuffer) {
+    //  html += logEntry + "\n";
+    //}
+    for (auto it = logBuffer.rbegin(); it != logBuffer.rend(); ++it) {
+        html += *it + "\n";
     }
     request->send(200, "text/plain", html);
   });
@@ -186,12 +302,12 @@ void setupWebServer() {
     request->send(200, "text/plain", "Stop command received");
   });
 
-  webServer.onNotFound([&](AsyncWebServerRequest *request) {
+  webServer.onNotFound([](AsyncWebServerRequest *request) {
     request->send(404, "text/plain", "Not found");
   });
 
   webServer.begin();
-  logMessage("Web server started");
+  logMessage("[STATUS] Web server started");
 }
 
 // Check for transitions on the START and STOP signals to control the generator.
@@ -236,20 +352,30 @@ void checkForSignals() {
   if(debounceStart) debounceStart = 0;
 }
 
+/**
+ * Interrupt service routine to read the current state of the RUNNING signal
+ * and log the state. Updates the runningState variable with the current
+ * digital reading from the RUNNING_SIGNAL pin.
+ */
 void IRAM_ATTR receiveRunningSignal() {
   runningState = digitalRead(RUNNING_SIGNAL);
-  logMessage("Current running signal: " + String(runningState));
+  if (runningState == HIGH) {
+    logMessage("[SIGNAL] Genset is running - signal HIGH");
+  } else {
+    logMessage("[SIGNAL] Genset is not running - signal HIGH");
+  }
 }
 
+// Interrupt service routine to read the current state of the LED and log it.
 void IRAM_ATTR receiveLEDStatus() {
   ledState = digitalRead(LED);
-  logMessage("Current LED state: " + String(ledState));
+  logMessage("[LED] Current state: " + String(ledState));
 }
 
 void setup() {
   // Initialize serial monitor
   Serial.begin(115200);
-  logMessage("Initializing...");
+  logMessage("[STATUS] Initializing...");
   
   // Configure pins
   pinMode(RELAY_K1, OUTPUT);
@@ -267,19 +393,16 @@ void setup() {
   attachInterrupt(RUNNING_SIGNAL, receiveRunningSignal, CHANGE);
   attachInterrupt(LED, receiveLEDStatus, CHANGE);
 
-  // Make sure we can persist the configuration into the NVS (Non Volatile Storage)
-  if (!LittleFS.begin(true)) {
-    logMessage("[ERROR] Unable to open spiffs partition or run LittleFS");
-    ESP.deepSleep(15 * 1000 * 1000); // 15 seconds deepSleep then retry
-  }
-
-  logMessage("Booting...");
+  logMessage("[STATUS] Booting...");
   
   // Start WiFi Manager
   setupWiFi();
 
   // Start the web server
   setupWebServer();
+
+  // Load allowStart from NVS
+  allowStart = getAllowStart();
 
   // Check for START/STOP signals every 50ms
   event_loop.onDelay(5, receiveRunningSignal);
