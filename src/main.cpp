@@ -55,7 +55,6 @@ protected:
 MyWifiManager WifiManager;
 
 // OTA Update Managers
-// Create the WiFi Manager instance
 class MyOtaWebUpdater : public OtaWebUpdater {
 protected:
     void logMessage(String message) override {
