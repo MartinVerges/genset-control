@@ -16,6 +16,12 @@ In my case, I use it to start and stop a Cummins Onan MDKDR in my Boat.
 
 ![Picture of the 2 Channel Relais Board](docs/LC-Relay-ESP32-2R-D5.png)
 
+#### Optional
+
+I maybe integrate Modbus RS485 connectivity for detailed status information about the generator.
+To do so, another Module to convert [TTL to RS485](https://www.amazon.de/dp/B09VGJCJKQ) is required.
+This module would be connected to the PIN 7 to Modul B- and PIN 8 to Modul B+ of the deutsch connector.
+
 ## Required connections
 
 - Connect the START signal from the CerboGX Relay NO (Normally Open) to GPIO PIN 26.
@@ -32,12 +38,26 @@ My MDKDR will be connected to:
 - Pin 2 to NO of Relay 2 (closer to the middle)
 - Pin 3 to NO of Relay 1 (outer side of the board)
 - Pin 6 to GPIO PIN 25 using a 3.3V limiter (example, resistor and zenner diode)
+- Pin 7 to TTL-to-RS485 B- (Optional, upcoming feature)
+- Pin 8 to TTL-to-RS485 B+ (Optional, upcoming feature)
+
+## Enclosure
+
+To properly install the box, I created a enclosure that can house all components.
+You can download and 3D print it yourself from [Onshape](https://cad.onshape.com/documents/9c1b0201fdea620ef028474e/w/3ae20249731e816e0fa28480/e/1f0a333ff2bf13ef2d5e0742?renderMode=0&uiState=6760538337f4be1332ea191f).
+In order to properly run the cables, use [PG Cable Glands Screw Joints](https://www.amazon.de/dp/B09MVL78VS).
 
 ## Web UI
 
 It's not required to use the WebUI, but it certainly adds some value.
 
 ![Genset Control Web UI](docs/web-ui.png)
+
+### Wifi Hotspot
+
+The device opens up an WIFI Hotspot with the name `Genset Control`.
+After connecting to this wifi using a Laptop or Mobile device, you can open the browser on IP [192.168.4.1](http://192.168.4.1) or if mDNS is working [genset-control.local](http://genset-control.local).
+Please reconfigure the WIFI to access your own AP, this is unfortunately right now only available through the CLI using: `curl -X POST http://192.168.4.1/api/wifi/add -H "Content-Type: application/json" -d '{ "apName": "yourSSID", "apPass": "YourPassword" }'`
 
 ## Contributing
 

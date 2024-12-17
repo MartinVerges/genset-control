@@ -1,4 +1,7 @@
 
+current-version.json
+manifest.json
+
 # General files
 .DS_Store
 Thumbs.db

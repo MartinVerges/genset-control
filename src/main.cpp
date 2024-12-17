@@ -5,6 +5,12 @@
  * Licensed under CC BY-NC-SA 4.0
  * (Attribution-NonCommercial-ShareAlike 4.0 International)
 **/
+#if !(defined(AUTO_FW_VERSION))
+  #define AUTO_FW_VERSION "v0.0.0-00000000"
+#endif
+#if !(defined(AUTO_FW_DATE))
+  #define AUTO_FW_DATE "2024-01-01"
+#endif
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -14,6 +20,10 @@
 #include <string>
 #include <ReactESP.h>
 #include <Preferences.h>
+#include <ESPmDNS.h>
+#include <otaWebUpdater.h>
+
+// #include <ModbusMaster.h>
 
 // Pin definitions
 #define RELAY_K1 16
@@ -22,8 +32,13 @@
 #define RUNNING_SIGNAL 25
 #define START_SIGNAL 26
 #define STOP_SIGNAL 27
+// #define MODBUS_ENABLED true
+// #define MODBUS_TX 32 // GPIO pin for MODBUS TX
+// #define MODBUS_RX 33 // GPIO pin for MODBUS RX
+// #define MODBUS_BAUDRATE 19200 // https://www.ccontrols.com/support/dp/modbus2300.pdf
 
 // Predefined Settings
+const char* MDNS_NAME = "genset-control";         // Name used for mDNS
 const char* NVS_GENSET_CONTROL = "Genset";        // Name of the NVS namespace
 const char* WIFI_SOFTAP_SSID = "Genset Control";  // Default name of the SoftAP
 const char* WIFI_SOFTAP_PASS = "";                // Default password of the SoftAP
@@ -39,6 +54,15 @@ protected:
 };
 MyWifiManager WifiManager;
 
+// OTA Update Managers
+// Create the WiFi Manager instance
+class MyOtaWebUpdater : public OtaWebUpdater {
+protected:
+    void logMessage(String message) override {
+        ::logMessage(message);
+    }
+};
+MyOtaWebUpdater otaWebUpdater;
 
 // Create the NVS instance
 Preferences preferences;
@@ -72,6 +96,34 @@ std::deque<String> logBuffer;
 using namespace reactesp;
 EventLoop event_loop;
 
+// MODBUS configuration and data structure
+// struct CumminsOnanData {
+//     uint16_t engine_hours;
+//     uint16_t battery_voltage;
+//     uint16_t engine_rpm;
+//     uint16_t generator_load;
+// };
+// CumminsOnanData gensetData;
+// ModbusMaster modbus;
+
+
+/**
+ * Polls the MODBUS data from the generator.
+ *
+ * The function connects to the serial interface, sends a request to read
+ * the holding registers starting at address 0x1000, and reads the response
+ * into the gensetData struct.
+ *
+ * The function is called every 1000ms to poll the MODBUS data.
+ */
+/*void queryModbus() {
+    modbus.begin(&Serial1, MODBUS_BAUDRATE, SERIAL_8N1);
+    modbus.readHoldingRegisters(1, 0x1000, 4); // Device ID 1, start address 0x1000, read 4 registers
+    gensetData.engine_hours = modbus.getResponseBuffer(0);
+    gensetData.battery_voltage = modbus.getResponseBuffer(1);
+    gensetData.engine_rpm = modbus.getResponseBuffer(2);
+    gensetData.generator_load = modbus.getResponseBuffer(3);
+}*/
 
 // Function to log messages
 void logMessage(const String& msg) {
@@ -98,7 +150,11 @@ void setupWiFi() {
   WifiManager.fallbackToSoftAp(true);       // Run a SoftAP if no known AP can be reached
 
   WifiManager.startBackgroundTask();        // Run the background task to take care of our Wifi
-  WifiManager.attachWebServer(&webServer);  // Attach our API to the Webserver 
+  WifiManager.attachWebServer(&webServer);  // Attach our API to the Webserver
+
+  logMessage("[mDNS] Starting mDNS...");
+  MDNS.begin(MDNS_NAME);
+  MDNS.addService("http", "tcp", 80);
 }
 
 // Set whether the generator is allowed to start.
@@ -375,6 +431,9 @@ void IRAM_ATTR receiveLEDStatus() {
 void setup() {
   // Initialize serial monitor
   Serial.begin(115200);
+  logMessage("\n\n==== starting ESP32 setup() ====");
+  logMessage("Firmware build date: " + String(__DATE__) + " " + String(__TIME__));
+  logMessage("Firmware Version: " + String(AUTO_FW_VERSION) + " (" + String(AUTO_FW_DATE) + ")");
   logMessage("[STATUS] Initializing...");
   
   // Configure pins
@@ -388,7 +447,7 @@ void setup() {
   // Initialize all relays and LED
   digitalWrite(RELAY_K1, LOW);
   digitalWrite(RELAY_K2, LOW);
-  digitalWrite(LED, LOW);
+  digitalWrite(LED, HIGH);
 
   attachInterrupt(RUNNING_SIGNAL, receiveRunningSignal, CHANGE);
   attachInterrupt(LED, receiveLEDStatus, CHANGE);
@@ -401,14 +460,27 @@ void setup() {
   // Start the web server
   setupWebServer();
 
+  otaWebUpdater.setFirmware(AUTO_FW_DATE, AUTO_FW_VERSION);
+  otaWebUpdater.startBackgroundTask();
+  otaWebUpdater.attachWebServer(&webServer);
+
   // Load allowStart from NVS
   allowStart = getAllowStart();
+
+  // Initialize the MODBUS connection
+//   if (MODBUS_ENABLED) {
+//     Serial1.begin(MODBUS_BAUDRATE, SERIAL_8N1, MODBUS_RX, MODBUS_TX);
+//     logMessage("[MODBUS] Initialized MODBUS connection");
+
+    // Poll MODBUS data every 1000ms
+//     event_loop.onRepeat(1000, queryModbus);
+//   }
 
   // Check for START/STOP signals every 50ms
   event_loop.onDelay(5, receiveRunningSignal);
   event_loop.onRepeat(50, checkForSignals);
   
-  // Boot sequence
+  // Boot sequence, blinking the LED 3 times
   for (int i = 0; i < 6; i++) {
     auto delay = 100 + i * 500;
     event_loop.onDelay(delay, []() { 
@@ -422,5 +494,9 @@ void setup() {
 }
 
 void loop() {
+  // Do not continue regular operation as long as a OTA is running
+  // Reason: Background workload can cause upgrade issues that we want to avoid!
+  if (otaWebUpdater.otaIsRunning) { yield(); delay(50); return; };
+
   event_loop.tick();
 }
