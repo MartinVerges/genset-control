@@ -334,9 +334,6 @@ void setupWebServer() {
   webServer.on("/log", HTTP_GET, [](AsyncWebServerRequest* request) {
     String html = "";
     // Display log entries
-    //for (const auto& logEntry : logBuffer) {
-    //  html += logEntry + "\n";
-    //}
     for (auto it = logBuffer.rbegin(); it != logBuffer.rend(); ++it) {
         html += *it + "\n";
     }
@@ -417,7 +414,7 @@ void IRAM_ATTR receiveRunningSignal() {
   if (runningState == HIGH) {
     logMessage("[SIGNAL] Genset is running - signal HIGH");
   } else {
-    logMessage("[SIGNAL] Genset is not running - signal HIGH");
+    logMessage("[SIGNAL] Genset is not running - signal LOW");
   }
 }
 
@@ -480,7 +477,7 @@ void setup() {
   event_loop.onRepeat(50, checkForSignals);
   
   // Boot sequence, blinking the LED 3 times
-  for (int i = 0; i < 6; i++) {
+  for (int i = 0; i < 5; i++) {
     auto delay = 100 + i * 500;
     event_loop.onDelay(delay, []() { 
       if(digitalRead(LED) == LOW) {
