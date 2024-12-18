@@ -47,6 +47,8 @@ To properly install the box, I created a enclosure that can house all components
 You can download and 3D print it yourself from [Onshape](https://cad.onshape.com/documents/9c1b0201fdea620ef028474e/w/3ae20249731e816e0fa28480/e/1f0a333ff2bf13ef2d5e0742?renderMode=0&uiState=6760538337f4be1332ea191f).
 In order to properly run the cables, use [PG Cable Glands Screw Joints](https://www.amazon.de/dp/B09MVL78VS).
 
+![Everything installed in a box](docs/box.jpg)
+
 ## Web UI
 
 It's not required to use the WebUI, but it certainly adds some value.
