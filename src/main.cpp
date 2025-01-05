@@ -74,16 +74,18 @@ unsigned long powerDownDuration = 10000; // 10 seconds
 // Debounce variables to prevent false transition to start
 const unsigned int debounceCount = 5;  // Number of signals to ignore between transitions
 unsigned long debounceStart = 0; // Start time of the debounce interval
+unsigned long retryStartCount = 0;  // Amount of retries since the last state transition
 
 // Web server
 AsyncWebServer webServer(80);
 
 // Variables for state tracking
-bool lastStartState = LOW; // Initial state for START signal - request to start up the Generator
-bool lastStopState = LOW;  // Initial state for STOP signal - request to stop the Generator
-bool runningState = LOW;   // Initial state for RUNNING signal - status if the Generator is running
-bool ledState = LOW;       // Initial state for LED
+bool lastStartState = LOW; // START signal - request to start up the Generator
+bool lastStopState = LOW;  // STOP signal - request to stop the Generator
+bool runningState = LOW;   // RUNNING signal - status if the Generator is running
+bool ledState = LOW;       // State of the LED
 bool allowStart = true;    // Allow the generator to start
+bool retryCount = 3;       // Retry count
 
 // Define maximum number of log entries
 const size_t LOG_BUFFER_MAX_SIZE = 100;
@@ -94,6 +96,23 @@ std::deque<String> logBuffer;
 // ReactESP event loop
 using namespace reactesp;
 EventLoop event_loop;
+
+// Functions
+void logMessage(const String& msg);
+void setupWiFi();
+bool setAllowStart(bool state);
+bool getAllowStart();
+bool setRetryCount(int count);
+int32_t getRetryCount();
+void checkGeneratorStateAndRetry();
+void startGenerator();
+void stopGenerator();
+void setupWebServer();
+void checkForSignals();
+void IRAM_ATTR receiveRunningSignal();
+void IRAM_ATTR receiveLEDStatus();
+void setup();
+void loop();
 
 // MODBUS configuration and data structure
 // struct CumminsOnanData {
@@ -191,6 +210,61 @@ bool getAllowStart() {
   }
 }
 
+  /**
+   * Sets the retry count of the generator to the given value.
+   *
+   * The retry count is the number of times the generator will be restarted after
+   * a failure before giving up. This value is stored in the non-volatile storage
+   * (NVS) and can be retrieved with getRetryCount.
+   *
+   * @param count The number of times the generator should be restarted before giving up.
+   * @return true if the setting was successfully written to NVS.
+   */
+bool setRetryCount(int count) {
+  if (preferences.begin(NVS_GENSET_CONTROL, false)) {
+    bool success = preferences.putInt("retryCount", count);
+    logMessage("[NVS] Retry count set to " + String(count));
+    retryCount = count;
+    preferences.end();
+    return success;
+  } else {
+    return false;
+  }
+}
+
+  /**
+   * Gets the retry count from NVS, setting the global retryCount variable to the result
+   * and returning it.
+   *
+   * The retry count is the number of times the generator will be restarted after
+   * a failure before giving up. This value can be changed with setRetryCount.
+   *
+   * @return The number of times the generator should be restarted before giving up.
+   */
+int32_t getRetryCount() {
+  if (preferences.begin(NVS_GENSET_CONTROL, true)) {
+    retryCount = preferences.getInt("retryCount", 3);
+    logMessage("[NVS] Loaded retry count from NVS: " + String(retryCount));
+    preferences.end();
+    return retryCount;
+  } else {
+    return 0;
+  }
+}
+
+void checkGeneratorStateAndRetry() {
+  if (allowStart && runningState == LOW && lastStartState == HIGH) {
+    // Generator should be running, but it's not. Retry until retryCount is reached
+    if (retryStartCount < retryCount) {
+      retryStartCount++;
+      logMessage("[CONTROL] Generator is not running. Retrying... (" + String(retryStartCount) + "/" + String(retryCount) + ")");
+      startGenerator();
+
+      // Retry if the generator is not running
+      event_loop.onDelay(15000, checkGeneratorStateAndRetry);
+    }
+  }
+}
 
 // Start the generator by turning on the K1 relay for the configured duration
 void startGenerator() {
@@ -209,6 +283,10 @@ void startGenerator() {
     digitalWrite(RELAY_K1, LOW);  // Turn off K1 relay
     logMessage("[CONTROL] Generator started");
   });
+
+  // Retry if the generator is not running
+  event_loop.onDelay(15000, checkGeneratorStateAndRetry);
+
   digitalWrite(LED, HIGH);
   event_loop.onDelay(2500, []() { digitalWrite(LED, LOW); });
 }
@@ -302,6 +380,14 @@ void setupWebServer() {
 )html";
     }
     html += R"html(
+  <h2>Settings</h2>
+  <input type="number" id="retryCountInput" placeholder="Retry count" value="
+)html";
+    html += String(retryCount);
+    html += R"html(">
+  <button onclick="fetch('/setRetryCount?count=' + document.getElementById('retryCountInput').value).then(() => location.reload())">Set retry count</button>
+)html";
+    html += R"html(
   <h2>Log</h2>
   <div class="logbox" id="logBox">loading...</div>
   <script>
@@ -318,6 +404,13 @@ void setupWebServer() {
 </html>
 )html";
     request->send(200, "text/html", html);
+  });
+
+  webServer.on("/setRetryCount", HTTP_GET, [](AsyncWebServerRequest* request) {
+    String count = request->getParam("count")->value();
+    retryCount = count.toInt();
+    setRetryCount(retryCount);
+    request->send(200, "text/plain", "Retry count set to " + count);
   });
 
   webServer.on("/allowStart", HTTP_GET, [](AsyncWebServerRequest* request) {
@@ -398,6 +491,7 @@ void checkForSignals() {
       debounceStart++;
       return;
     }
+    retryStartCount = 0;  // reset retry count
     startGenerator();
     lastStartState = currentStartState;
   }
@@ -460,8 +554,9 @@ void setup() {
   otaWebUpdater.startBackgroundTask();
   otaWebUpdater.attachWebServer(&webServer);
 
-  // Load allowStart from NVS
+  // Load from NVS
   allowStart = getAllowStart();
+  retryCount = getRetryCount();
 
   // Initialize the MODBUS connection
 //   if (MODBUS_ENABLED) {
