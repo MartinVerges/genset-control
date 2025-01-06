@@ -1,8 +1,8 @@
 /**
  * @file otaWebUpdater.h
  * @author Martin Verges <martin@verges.cc>
- * @version 0.2
- * @date 2024-12-16
+ * @version 0.3
+ * @date 2025-01-06
  * 
  * @copyright Copyright (c) 2022-2024 by the author alone
  * 

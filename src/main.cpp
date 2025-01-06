@@ -42,6 +42,7 @@ const char* MDNS_NAME = "genset-control";         // Name used for mDNS
 const char* NVS_GENSET_CONTROL = "Genset";        // Name of the NVS namespace
 const char* WIFI_SOFTAP_SSID = "Genset Control";  // Default name of the SoftAP
 const char* WIFI_SOFTAP_PASS = "";                // Default password of the SoftAP
+const char* OTA_BASE_URL = "";                    // Base URL for OTA updates (if empty, OTA updates are disabled)
 
 void logMessage(const String& message);
 
@@ -85,7 +86,7 @@ bool lastStopState = LOW;  // STOP signal - request to stop the Generator
 bool runningState = LOW;   // RUNNING signal - status if the Generator is running
 bool ledState = LOW;       // State of the LED
 bool allowStart = true;    // Allow the generator to start
-bool retryCount = 3;       // Retry count
+uint8_t retryCount = 3;    // Retry count
 
 // Define maximum number of log entries
 const size_t LOG_BUFFER_MAX_SIZE = 100;
@@ -103,7 +104,7 @@ void setupWiFi();
 bool setAllowStart(bool state);
 bool getAllowStart();
 bool setRetryCount(int count);
-int32_t getRetryCount();
+uint8_t getRetryCount();
 void checkGeneratorStateAndRetry();
 void startGenerator();
 void stopGenerator();
@@ -169,6 +170,7 @@ void setupWiFi() {
 
   WifiManager.startBackgroundTask();        // Run the background task to take care of our Wifi
   WifiManager.attachWebServer(&webServer);  // Attach our API to the Webserver
+  WifiManager.attachUI();                   // Attach the UI to the Webserver
 
   logMessage("[mDNS] Starting mDNS...");
   MDNS.begin(MDNS_NAME);
@@ -220,9 +222,9 @@ bool getAllowStart() {
    * @param count The number of times the generator should be restarted before giving up.
    * @return true if the setting was successfully written to NVS.
    */
-bool setRetryCount(int count) {
+bool setRetryCount(uint8_t count) {
   if (preferences.begin(NVS_GENSET_CONTROL, false)) {
-    bool success = preferences.putInt("retryCount", count);
+    bool success = preferences.putUInt("retryCount", count);
     logMessage("[NVS] Retry count set to " + String(count));
     retryCount = count;
     preferences.end();
@@ -241,9 +243,9 @@ bool setRetryCount(int count) {
    *
    * @return The number of times the generator should be restarted before giving up.
    */
-int32_t getRetryCount() {
+uint8_t getRetryCount() {
   if (preferences.begin(NVS_GENSET_CONTROL, true)) {
-    retryCount = preferences.getInt("retryCount", 3);
+    retryCount = (uint8_t)preferences.getUInt("retryCount", 3);
     logMessage("[NVS] Loaded retry count from NVS: " + String(retryCount));
     preferences.end();
     return retryCount;
@@ -352,6 +354,14 @@ void setupWebServer() {
         background-color: #cccccc;
         color: #666666;
       }
+      input {
+        border-width: 1px;
+        border-radius: 4px;
+        padding: 9px;
+        font-size: 16px;
+        transition: 0.3s;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
       .red {
         background: #f44336;
       }
@@ -381,10 +391,7 @@ void setupWebServer() {
     }
     html += R"html(
   <h2>Settings</h2>
-  <input type="number" id="retryCountInput" placeholder="Retry count" value="
-)html";
-    html += String(retryCount);
-    html += R"html(">
+  <input type="number" id="retryCountInput" placeholder="Retry count" value=")html" + String(retryCount)+ R"html(">
   <button onclick="fetch('/setRetryCount?count=' + document.getElementById('retryCountInput').value).then(() => location.reload())">Set retry count</button>
 )html";
     html += R"html(
@@ -550,6 +557,7 @@ void setup() {
   // Start the web server
   setupWebServer();
 
+  otaWebUpdater.setBaseUrl(OTA_BASE_URL);
   otaWebUpdater.setFirmware(AUTO_FW_DATE, AUTO_FW_VERSION);
   otaWebUpdater.startBackgroundTask();
   otaWebUpdater.attachWebServer(&webServer);
