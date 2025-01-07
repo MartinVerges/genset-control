@@ -69,13 +69,13 @@ Preferences preferences;
 
 // Configurable durations (default values)
 // defines how long the Relay should be turned on
-unsigned long powerUpDuration = 10000;  // 10 seconds
-unsigned long powerDownDuration = 10000; // 10 seconds
+uint32_t powerUpDuration = 10000;  // 10 seconds
+uint32_t powerDownDuration = 10000; // 10 seconds
 
 // Debounce variables to prevent false transition to start
-const unsigned int debounceCount = 5;  // Number of signals to ignore between transitions
-unsigned long debounceStart = 0; // Start time of the debounce interval
-unsigned long retryStartCount = 0;  // Amount of retries since the last state transition
+const uint16_t debounceCount = 5;  // Number of signals to ignore between transitions
+uint32_t debounceStart = 0; // Start time of the debounce interval
+uint32_t retryStartCount = 0;  // Amount of retries since the last state transition
 
 // Web server
 AsyncWebServer webServer(80);
@@ -89,7 +89,7 @@ bool allowStart = true;    // Allow the generator to start
 uint8_t retryCount = 3;    // Retry count
 
 // Define maximum number of log entries
-const size_t LOG_BUFFER_MAX_SIZE = 100;
+const uint16_t LOG_BUFFER_MAX_SIZE = 100;
 
 // Use a deque to store log entries
 std::deque<String> logBuffer;
@@ -101,9 +101,13 @@ EventLoop event_loop;
 // Functions
 void logMessage(const String& msg);
 void setupWiFi();
+bool setPowerUpDuration(uint32_t duration);
+uint32_t getPowerUpDuration();
+bool setPowerDownDuration(uint32_t duration);
+uint32_t getPowerDownDuration();
 bool setAllowStart(bool state);
 bool getAllowStart();
-bool setRetryCount(int count);
+bool setRetryCount(uint8_t count);
 uint8_t getRetryCount();
 void checkGeneratorStateAndRetry();
 void startGenerator();
@@ -175,6 +179,88 @@ void setupWiFi() {
   logMessage("[mDNS] Starting mDNS...");
   MDNS.begin(MDNS_NAME);
   MDNS.addService("http", "tcp", 80);
+}
+
+/**
+ * Sets the power-up duration for the generator.
+ *
+ * Stores the specified duration in non-volatile storage (NVS) under the 
+ * "powerUpDuration" key and logs the operation.
+ *
+ * @param duration The duration in milliseconds for which the K1 relay should be turned on.
+ * @return true if the duration was successfully written to NVS, false otherwise.
+ */
+bool setPowerUpDuration(uint32_t duration) {
+  if (preferences.begin(NVS_GENSET_CONTROL, false)) {
+    bool success = preferences.putUInt("powerUpDuration", duration);
+    logMessage("[NVS] Power up duration set to " + String(duration));
+    preferences.end();
+    return success;
+  } else {
+    return false;
+  }
+}
+
+/**
+ * Retrieves the power-up duration from non-volatile storage (NVS).
+ *
+ * This function accesses the NVS to obtain the stored duration for which the K1 relay should be 
+ * activated to start the generator. If no value has been stored previously, it returns the default
+ * power-up duration defined in the global variable `powerUpDuration`.
+ *
+ * @return The duration in milliseconds for which the K1 relay is to be turned on, or 0 if the 
+ *         NVS could not be accessed.
+ */
+uint32_t getPowerUpDuration() {
+  if (preferences.begin(NVS_GENSET_CONTROL, true)) {
+    uint32_t duration = preferences.getUInt("powerUpDuration", powerUpDuration);
+    logMessage("[NVS] Loaded power up duration from NVS: " + String(duration));
+    preferences.end();
+    return duration;
+  } else {
+    return 0;
+  }
+}
+
+/**
+ * Sets the power-down duration for the generator.
+ *
+ * Stores the specified duration in non-volatile storage (NVS) under the
+ * "powerDownDuration" key and logs the operation.
+ *
+ * @param duration The duration in milliseconds for which the K2 relay should be turned on.
+ * @return true if the duration was successfully written to NVS, false otherwise.
+ */
+bool setPowerDownDuration(uint32_t duration) {
+  if (preferences.begin(NVS_GENSET_CONTROL, false)) {
+    bool success = preferences.putUInt("powerDownDuration", duration);
+    logMessage("[NVS] Power down duration set to " + String(duration));
+    preferences.end();
+    return success;
+  } else {
+    return false;
+  }
+}
+
+/**
+ * Retrieves the power-down duration from non-volatile storage (NVS).
+ *
+ * This function accesses the NVS to obtain the stored duration for which the K2 relay should be 
+ * activated to stop the generator. If no value has been stored previously, it returns the default
+ * power-down duration defined in the global variable `powerDownDuration`.
+ *
+ * @return The duration in milliseconds for which the K2 relay is to be turned on, or 0 if the 
+ *         NVS could not be accessed.
+ */
+uint32_t getPowerDownDuration() {
+  if (preferences.begin(NVS_GENSET_CONTROL, true)) {
+    uint32_t duration = preferences.getUInt("powerDownDuration", powerDownDuration);
+    logMessage("[NVS] Loaded power down duration from NVS: " + String(duration));
+    preferences.end();
+    return duration;
+  } else {
+    return 0;
+  }
 }
 
 // Set whether the generator is allowed to start.
@@ -335,6 +421,7 @@ void setupWebServer() {
         white-space: pre-wrap;
       }
       button {
+        margin-top: 0.67em;
         background: #4CAF50;
         color: #fff;
         border: none;
@@ -355,6 +442,7 @@ void setupWebServer() {
         color: #666666;
       }
       input {
+        margin-top: 0.67em;
         border-width: 1px;
         border-radius: 4px;
         padding: 9px;
@@ -386,13 +474,19 @@ void setupWebServer() {
   <button onclick="fetch('/start').then(() => location.reload())">Start Generator</button>
   <button onclick="fetch('/stop').then(() => location.reload())">Stop Generator</button>
   <h2>Settings</h2>
-  <button class="red" onclick="fetch('/disallowStart').then(() => location.reload())">Startup enabled<br>click to disable</button>
+  <button class="red" onclick="fetch('/disallowStart').then(() => location.reload())">Startup is enabled, click to disable</button>
 )html";
     }
     html += R"html(
-  <h2>Settings</h2>
+    <br>
   <input type="number" id="retryCountInput" placeholder="Retry count" value=")html" + String(retryCount)+ R"html(">
   <button onclick="fetch('/setRetryCount?count=' + document.getElementById('retryCountInput').value).then(() => location.reload())">Set retry count</button>
+  <br>
+  <input type="number" id="powerUpDurationInput" placeholder="Power up duration" value=")html" + String(powerUpDuration)+ R"html(">
+  <button onclick="fetch('/setPowerUpDuration?duration=' + document.getElementById('powerUpDurationInput').value).then(() => location.reload())">Set power up duration</button>
+  <br>
+  <input type="number" id="powerDownDurationInput" placeholder="Power down duration" value=")html" + String(powerDownDuration)+ R"html(">
+  <button onclick="fetch('/setPowerDownDuration?duration=' + document.getElementById('powerDownDurationInput').value).then(() => location.reload())">Set power down duration</button>
 )html";
     html += R"html(
   <h2>Log</h2>
@@ -418,6 +512,20 @@ void setupWebServer() {
     retryCount = count.toInt();
     setRetryCount(retryCount);
     request->send(200, "text/plain", "Retry count set to " + count);
+  });
+
+  webServer.on("/setPowerUpDuration", HTTP_GET, [](AsyncWebServerRequest* request) {
+    String duration = request->getParam("duration")->value();
+    powerUpDuration = duration.toInt();
+    setPowerUpDuration(powerUpDuration);
+    request->send(200, "text/plain", "Power up duration set to " + duration);
+  });
+
+  webServer.on("/setPowerDownDuration", HTTP_GET, [](AsyncWebServerRequest* request) {
+    String duration = request->getParam("duration")->value();
+    powerDownDuration = duration.toInt();
+    setPowerDownDuration(powerDownDuration);
+    request->send(200, "text/plain", "Power down duration set to " + duration);
   });
 
   webServer.on("/allowStart", HTTP_GET, [](AsyncWebServerRequest* request) {
@@ -565,7 +673,9 @@ void setup() {
   // Load from NVS
   allowStart = getAllowStart();
   retryCount = getRetryCount();
-
+  powerUpDuration = getPowerUpDuration();
+  powerDownDuration = getPowerDownDuration();
+  
   // Initialize the MODBUS connection
 //   if (MODBUS_ENABLED) {
 //     Serial1.begin(MODBUS_BAUDRATE, SERIAL_8N1, MODBUS_RX, MODBUS_TX);
@@ -580,7 +690,7 @@ void setup() {
   event_loop.onRepeat(50, checkForSignals);
   
   // Boot sequence, blinking the LED 3 times
-  for (int i = 0; i < 5; i++) {
+  for (uint8_t i = 0; i < 5; i++) {
     auto delay = 100 + i * 500;
     event_loop.onDelay(delay, []() { 
       if(digitalRead(LED) == LOW) {
