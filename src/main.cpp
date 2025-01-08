@@ -176,7 +176,7 @@ void setupWiFi() {
   WifiManager.attachWebServer(&webServer);  // Attach our API to the Webserver
   WifiManager.attachUI();                   // Attach the UI to the Webserver
 
-  logMessage("[mDNS] Starting mDNS...");
+  logMessage("[mDNS] Starting mDNS for '" + String(MDNS_NAME) + ".local'...");
   MDNS.begin(MDNS_NAME);
   MDNS.addService("http", "tcp", 80);
 }
