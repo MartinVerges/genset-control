@@ -12,8 +12,16 @@
 #ifndef OTAWEBUPDATER_h
 #define OTAWEBUPDATER_h
 
+#ifndef OTAWEBUPDATER_USE_NVS
+#define OTAWEBUPDATER_USE_NVS true
+#endif
+
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
+
+#if OTAWEBUPDATER_USE_NVS == true
+#include <Preferences.h>
+#endif
 
 struct OtaWebVersion {
   String date;
@@ -23,6 +31,12 @@ struct OtaWebVersion {
 void otaTask(void* param);
 
 class OtaWebUpdater {
+  protected:
+#if OTAWEBUPDATER_USE_NVS == true
+    Preferences preferences;            // Used to store AP credentials to NVS
+    char * NVS;                         // Name used for NVS preferences
+#endif
+
   public:
     // Is a version check currently running
     bool otaIsRunning = false;
@@ -35,15 +49,19 @@ class OtaWebUpdater {
 
     // Prefix for all API endpoints
     String apiPrefix = "/api/ota";
+    String uiPrefix = "/ota";          // Prefix for all UI endpionts
 
     // Initialize the OtaWebUpdater
-    OtaWebUpdater();
+    OtaWebUpdater(const char * ns = "otawebupdater");
 
     // Destruct this object
     virtual ~OtaWebUpdater();
 
     // Attach a webserver (if not done on initialization)
     void attachWebServer(AsyncWebServer * srv);
+
+    // Attach a UI to manage the firmware
+    void attachUI();
 
     // Starts a new otaTask
     bool startBackgroundTask();
@@ -64,18 +82,16 @@ class OtaWebUpdater {
     bool updateFile(String baseUrl, String filename);
 
     // Set a new baseUrl
-    void setBaseUrl(String newUrl) { baseUrl = newUrl; };
+    void setBaseUrl(String newUrl);
 
     // Get a the baseUrl
     String getBaseUrl() { return baseUrl; };
 
     // Set a different check interval
-    void setVersionCheckInterval(uint32_t minutes) {
-      intervalVersionCheckMillis = minutes * 60 * 1000;
-    }
+    void setVersionCheckInterval(uint32_t minutes);
 
     // Set OTA password
-    void setOtaPassword(String newPass) { otaPassword = newPass; }
+    void setOtaPassword(String newPass);
 
     // Set Firmware information
     void setFirmware(String fwDate, String fwRelease) {

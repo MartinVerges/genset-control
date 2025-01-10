@@ -62,7 +62,7 @@ protected:
         ::logMessage(message);
     }
 };
-MyOtaWebUpdater otaWebUpdater;
+MyOtaWebUpdater* otaWebUpdater = nullptr;
 
 // Create the NVS instance
 Preferences preferences;
@@ -665,10 +665,12 @@ void setup() {
   // Start the web server
   setupWebServer();
 
-  otaWebUpdater.setBaseUrl(OTA_BASE_URL);
-  otaWebUpdater.setFirmware(AUTO_FW_DATE, AUTO_FW_VERSION);
-  otaWebUpdater.startBackgroundTask();
-  otaWebUpdater.attachWebServer(&webServer);
+  otaWebUpdater = new MyOtaWebUpdater();
+  otaWebUpdater->setBaseUrl(OTA_BASE_URL);
+  otaWebUpdater->setFirmware(AUTO_FW_DATE, AUTO_FW_VERSION);
+  otaWebUpdater->startBackgroundTask();
+  otaWebUpdater->attachWebServer(&webServer);
+  otaWebUpdater->attachUI();
 
   // Load from NVS
   allowStart = getAllowStart();
@@ -705,7 +707,7 @@ void setup() {
 void loop() {
   // Do not continue regular operation as long as a OTA is running
   // Reason: Background workload can cause upgrade issues that we want to avoid!
-  if (otaWebUpdater.otaIsRunning) { yield(); delay(50); return; };
+  if (otaWebUpdater->otaIsRunning) { yield(); delay(50); return; };
 
   event_loop.tick();
 }
