@@ -5,7 +5,9 @@ In my case, I use it to start and stop a Cummins Onan MDKDR in my Boat.
 
 ## Features
 
-- Connect to your WiFi network an control your Genset from your Mobile Phone using a Browser
+- Connect to your WiFi network an control your Genset from your Mobile Phone using a Browser.
+- Update the software using over-the-air updates, available via `/ota`.
+- Configure intervals and retry counts to ensure a properly running generator.
 
 ## Prerequisites
 
