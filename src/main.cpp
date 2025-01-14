@@ -56,7 +56,7 @@ protected:
 MyWifiManager WifiManager;
 
 // OTA Update Managers
-class MyOtaWebUpdater : public OtaWebUpdater {
+class MyOtaWebUpdater : public OTAWEBUPDATER {
 protected:
     void logMessage(String message) override {
         ::logMessage(message);
@@ -199,6 +199,7 @@ bool setPowerUpDuration(uint32_t duration) {
   } else {
     return false;
   }
+  powerUpDuration = duration;
 }
 
 /**
@@ -240,6 +241,7 @@ bool setPowerDownDuration(uint32_t duration) {
   } else {
     return false;
   }
+  powerDownDuration = duration;
 }
 
 /**
@@ -516,15 +518,13 @@ void setupWebServer() {
 
   webServer.on("/setPowerUpDuration", HTTP_GET, [](AsyncWebServerRequest* request) {
     String duration = request->getParam("duration")->value();
-    powerUpDuration = duration.toInt();
-    setPowerUpDuration(powerUpDuration);
+    setPowerUpDuration(duration.toInt());
     request->send(200, "text/plain", "Power up duration set to " + duration);
   });
 
   webServer.on("/setPowerDownDuration", HTTP_GET, [](AsyncWebServerRequest* request) {
     String duration = request->getParam("duration")->value();
-    powerDownDuration = duration.toInt();
-    setPowerDownDuration(powerDownDuration);
+    setPowerDownDuration(duration.toInt());
     request->send(200, "text/plain", "Power down duration set to " + duration);
   });
 
