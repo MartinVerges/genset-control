@@ -61,7 +61,7 @@ It's not required to use the WebUI, but it certainly adds some value.
 
 The device opens up an WIFI Hotspot with the name `Genset Control`.
 After connecting to this wifi using a Laptop or Mobile device, you can open the browser on IP [192.168.4.1](http://192.168.4.1) or if mDNS is working [genset-control.local](http://genset-control.local).
-Please reconfigure the WIFI to access your own AP, this is unfortunately right now only available through the CLI using: `curl -X POST http://192.168.4.1/api/wifi/add -H "Content-Type: application/json" -d '{ "apName": "yourSSID", "apPass": "YourPassword" }'`
+Please reconfigure the WIFI to access your own AP, this is possible with the UI at [192.168.4.1/wifi](http://192.168.4.1/wifi).
 
 ## Contributing
 
