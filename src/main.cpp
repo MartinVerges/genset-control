@@ -18,9 +18,10 @@
 #include <wifimanager.h>
 #include <deque>
 #include <string>
+#include <mdns.h>
+#include <esp_event.h>
 #include <ReactESP.h>
 #include <Preferences.h>
-#include <ESPmDNS.h>
 #include <otaWebUpdater.h>
 
 // #include <ModbusMaster.h>
@@ -165,6 +166,10 @@ void logMessage(const String& msg) {
   Serial.println(message);
 }
 
+void WiFiEvent(WiFiEvent_t event) {
+  logMessage("[WiFi-event] event: " + String(event));
+}
+
 // WiFi connection setup
 void setupWiFi() {
   logMessage("[WIFI] Starting WiFi Manager...");
@@ -176,9 +181,36 @@ void setupWiFi() {
   WifiManager.attachWebServer(&webServer);  // Attach our API to the Webserver
   WifiManager.attachUI();                   // Attach the UI to the Webserver
 
-  logMessage("[mDNS] Starting mDNS for '" + String(MDNS_NAME) + ".local'...");
-  MDNS.begin(MDNS_NAME);
-  MDNS.addService("http", "tcp", 80);
+  WiFi.onEvent(WiFiEvent);
+  WiFi.onEvent(
+    [](WiFiEvent_t event, WiFiEventInfo_t info) {
+      // Wifi connected and got an IP address
+      logMessage("[mDNS] Got event '" + String(event));
+
+      if (mdns_init() == ESP_OK) {
+        logMessage("[mDNS] Starting mDNS for '" + String(MDNS_NAME) + ".local'...");
+        if (mdns_hostname_set(MDNS_NAME) != ESP_OK) logMessage("[mDNS] Failed to set hostname!");
+        if (mdns_service_exists("_http", "_tcp", NULL) == false) {
+          if (mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0) != ESP_OK) {
+            logMessage("[mDNS] Failed to add service!");
+          }
+        }
+      } else {
+        logMessage("[mDNS] Failed to start mDNS!");
+      };
+    },
+    WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP
+  );
+  WiFi.onEvent(
+    [](WiFiEvent_t event, WiFiEventInfo_t info) {
+      // Wifi disconnected
+      // mdns_service_remove("_http", "_tcp");
+      logMessage("[mDNS] Stopping mDNS...");
+      mdns_service_remove_all();
+      mdns_free();
+    },
+    WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED
+  );
 }
 
 /**
