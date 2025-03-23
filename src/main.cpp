@@ -87,7 +87,7 @@ bool lastStopState = LOW;  // STOP signal - request to stop the Generator
 bool runningState = LOW;   // RUNNING signal - status if the Generator is running
 bool ledState = LOW;       // State of the LED
 bool allowStart = true;    // Allow the generator to start
-uint8_t retryCount = 3;    // Retry count
+uint8_t retryCount = 1;    // Retry count
 
 // Define maximum number of log entries
 const uint16_t LOG_BUFFER_MAX_SIZE = 100;
