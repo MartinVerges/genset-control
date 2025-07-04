@@ -73,9 +73,6 @@ Preferences preferences;
 uint32_t powerUpDuration = 10000;  // 10 seconds
 uint32_t powerDownDuration = 10000; // 10 seconds
 
-// Debounce variables to prevent false transition to start
-const uint16_t debounceCount = 5;  // Number of signals to ignore between transitions
-uint32_t debounceStart = 0; // Start time of the debounce interval
 uint32_t retryStartCount = 0;  // Amount of retries since the last state transition
 
 // Web server
@@ -88,6 +85,10 @@ bool runningState = LOW;   // RUNNING signal - status if the Generator is runnin
 bool ledState = LOW;       // State of the LED
 bool allowStart = true;    // Allow the generator to start
 uint8_t retryCount = 1;    // Retry count
+
+volatile bool runningSignalChanged = false;
+bool generatorStopping = false;
+bool generatorStarting = false;
 
 // Define maximum number of log entries
 const uint16_t LOG_BUFFER_MAX_SIZE = 100;
@@ -216,15 +217,14 @@ void setupWiFi() {
 bool setPowerUpDuration(uint32_t duration) {
   if (preferences.begin(NVS_GENSET_CONTROL, false)) {
     bool success = preferences.putUInt("powerUpDuration", duration);
+    powerUpDuration = duration;  // Move this BEFORE return
     logMessage("[NVS] Power up duration set to " + String(duration));
     preferences.end();
     return success;
   } else {
     return false;
   }
-  powerUpDuration = duration;
 }
-
 /**
  * Retrieves the power-up duration from non-volatile storage (NVS).
  *
@@ -237,13 +237,11 @@ bool setPowerUpDuration(uint32_t duration) {
  */
 uint32_t getPowerUpDuration() {
   if (preferences.begin(NVS_GENSET_CONTROL, true)) {
-    uint32_t duration = preferences.getUInt("powerUpDuration", powerUpDuration);
-    logMessage("[NVS] Loaded power up duration from NVS: " + String(duration));
+    powerUpDuration = preferences.getUInt("powerUpDuration", powerUpDuration);
+    logMessage("[NVS] Loaded power up duration from NVS: " + String(powerUpDuration));
     preferences.end();
-    return duration;
-  } else {
-    return 0;
   }
+  return powerUpDuration;  // Always return the value
 }
 
 /**
@@ -385,16 +383,27 @@ void startGenerator() {
     logMessage("[CONTROL] Generator is not allowed to start. Ignoring START signal");
     return;
   }
-  bool currentStopState = digitalRead(RELAY_K2);
-  if (currentStopState == HIGH) {
+  
+  // Prevent starting while stopping
+  if (generatorStopping) {
     logMessage("[CONTROL] Generator is currently shutting down. Ignoring START signal");
     return;
   }
+  
+  // Prevent multiple start operations
+  if (generatorStarting) {
+    logMessage("[CONTROL] Generator start already in progress, ignoring duplicate request");
+    return;
+  }
+    
+  generatorStarting = true;
   logMessage("[CONTROL] Starting generator...");
   digitalWrite(RELAY_K1, HIGH); // Turn on K1 relay
+  
   event_loop.onDelay(powerUpDuration, []() {
     digitalWrite(RELAY_K1, LOW);  // Turn off K1 relay
     logMessage("[CONTROL] Generator started");
+    generatorStarting = false;  // Reset flag after completion
   });
 
   // Retry if the generator is not running
@@ -406,13 +415,29 @@ void startGenerator() {
 
 // Stop the generator by turning on the K2 relay for the configured duration
 void stopGenerator() {
+  // Prevent multiple stop operations
+  if (generatorStopping) {
+    logMessage("[CONTROL] Generator stop already in progress, ignoring duplicate request");
+    return;
+  }
+
+  // Cancel any pending start operations
+  if (generatorStarting) {
+    generatorStarting = false;
+    digitalWrite(RELAY_K1, LOW);  // Ensure K1 is off
+  }
+  
+  generatorStopping = true;
   logMessage("[CONTROL] Stopping generator...");
-  digitalWrite(RELAY_K2, HIGH); // Turn on K2 relayy
+  digitalWrite(RELAY_K2, HIGH); // Turn on K2 relay
   digitalWrite(RELAY_K1, LOW);  // Turn off K1 relay (in case it was on)
+  
   event_loop.onDelay(powerDownDuration, []() {
     digitalWrite(RELAY_K2, LOW);  // Turn off K2 relay
     logMessage("[CONTROL] Generator stopped");
+    generatorStopping = false;  // Reset flag after completion
   });
+  
   digitalWrite(LED, HIGH);
   event_loop.onDelay(2500, []() { digitalWrite(LED, LOW); });
 }
@@ -533,10 +558,18 @@ void setupWebServer() {
   });
 
   webServer.on("/setRetryCount", HTTP_GET, [](AsyncWebServerRequest* request) {
-    String count = request->getParam("count")->value();
-    retryCount = count.toInt();
+    if (!request->hasParam("count")) {
+      request->send(400, "text/plain", "Missing count parameter");
+      return;
+    }
+    int count = request->getParam("count")->value().toInt();
+    if (count < 0 || count > 10) {  // Reasonable bounds
+      request->send(400, "text/plain", "Count must be between 0 and 10");
+      return;
+    }
+    retryCount = count;
     setRetryCount(retryCount);
-    request->send(200, "text/plain", "Retry count set to " + count);
+    request->send(200, "text/plain", "Retry count set to " + String(count));
   });
 
   webServer.on("/setPowerUpDuration", HTTP_GET, [](AsyncWebServerRequest* request) {
@@ -593,6 +626,42 @@ void setupWebServer() {
   logMessage("[STATUS] Web server started");
 }
 
+  /**
+   * This function is used to debounce the RUNNING_SIGNAL pin.
+   * It checks for state changes and after a short delay (DEBOUNCE_DELAY) will update the runningState variable.
+   * It also logs each state change to the serial console.
+   */
+void checkRunningSignal() {
+  static unsigned long lastChangeTime = 0;
+  static bool lastReading = LOW;
+  static bool stableState = LOW;
+  const unsigned long DEBOUNCE_DELAY = 50;
+  
+  if (runningSignalChanged) {
+    runningSignalChanged = false;
+    unsigned long currentTime = millis();
+    bool currentReading = digitalRead(RUNNING_SIGNAL);
+    
+    if (currentReading != lastReading) {
+      lastChangeTime = currentTime;
+      lastReading = currentReading;
+    }
+    
+    if ((currentTime - lastChangeTime) > DEBOUNCE_DELAY) {
+      if (stableState != lastReading) {
+        stableState = lastReading;
+        runningState = stableState;
+        
+        if (runningState == HIGH) {
+          logMessage("[SIGNAL] Genset is running - signal HIGH");
+        } else {
+          logMessage("[SIGNAL] Genset is not running - signal LOW");
+        }
+      }
+    }
+  }
+}
+
 // Check for transitions on the START and STOP signals to control the generator.
 //
 // This function is meant to be called frequently, such as in loop().
@@ -608,32 +677,84 @@ void setupWebServer() {
 // The last state of the START and STOP signals is stored in the variables
 // lastStartState and lastStopState, respectively.
 void checkForSignals() {
+  // Debounce variables
+  static unsigned long lastStartChangeTime = 0;
+  static unsigned long lastStopChangeTime = 0;
+  static bool lastStartReading = LOW;
+  static bool lastStopReading = LOW;
+  static bool stableStartState = LOW;
+  static bool stableStopState = LOW;
+  static bool initialized = false;
+  const unsigned long DEBOUNCE_DELAY = 50; // ms
+  
+  // Initialize static variables on first run
+  if (!initialized) {
+    initialized = true;
+    // Read current states to initialize properly
+    bool currentStart = digitalRead(START_SIGNAL);
+    bool currentStop = digitalRead(STOP_SIGNAL);
+    
+    lastStartReading = currentStart;
+    lastStopReading = currentStop;
+    stableStartState = currentStart;
+    stableStopState = currentStop;
+    
+    logMessage("[INIT] checkForSignals initialized with START: " + String(currentStart) + 
+               ", STOP: " + String(currentStop));
+    return; // Skip first iteration
+  }
+
+  unsigned long currentTime = millis();
   bool currentStartState = digitalRead(START_SIGNAL);
   bool currentStopState = digitalRead(STOP_SIGNAL);
-
-  if (currentStopState == HIGH) {
-    if (currentStartState == HIGH) {
-      logMessage("Generator stopped by priority STOP signal, ignoring START signal");
-      return;
-    }
+  
+  // Debounce START signal
+  if (currentStartState != lastStartReading) {
+    lastStartChangeTime = currentTime;
+    lastStartReading = currentStartState;
+  }
+  if ((currentTime - lastStartChangeTime) > DEBOUNCE_DELAY) {
+    stableStartState = lastStartReading;
+  }
+  
+  // Debounce STOP signal  
+  if (currentStopState != lastStopReading) {
+    lastStopChangeTime = currentTime;
+    lastStopReading = currentStopState;
+  }
+  if ((currentTime - lastStopChangeTime) > DEBOUNCE_DELAY) {
+    stableStopState = lastStopReading;
+  }
+  
+  // Use stable states for the rest of the logic
+  currentStartState = stableStartState;
+  currentStopState = stableStopState;
+  
+  // If the STOP signal is HIGH, ignore the START signal
+  if (currentStopState == HIGH && currentStartState == HIGH) {
+    logMessage("[WARN] Generator stopped by priority STOP signal, ignoring simultaneous START signal");
+    return;
   }
 
-  if (lastStartState == HIGH && currentStartState == LOW) { 
-    // POWER-DOWN: Detect START signal transition from HIGH to LOW
+  // Detect STOP signal transition from LOW to HIGH (rising edge only)
+  if (currentStopState == HIGH && lastStopState == LOW) {
+    logMessage("[STATUS] STOP signal detected");
     stopGenerator();
-    lastStartState = currentStartState;
+    lastStartState = LOW;  // Reset start state when stopping
+    lastStopState = currentStopState;
+    return;
+  }
 
-  } else if (lastStartState == LOW && currentStartState == HIGH) { 
-    // POWER-UP: Detect START signal transition from LOW to HIGH
-    if (debounceStart < debounceCount) {
-      debounceStart++;
-      return;
-    }
+  // Detect START signal transition from LOW to HIGH
+  if (currentStartState == HIGH && lastStartState == LOW && !generatorStopping) { 
+    logMessage("[STATUS] START signal detected");
     retryStartCount = 0;  // reset retry count
     startGenerator();
-    lastStartState = currentStartState;
   }
-  if(debounceStart) debounceStart = 0;
+  
+  // Always update states at the end
+  lastStartState = currentStartState;
+  lastStopState = currentStopState;
 }
 
 /**
@@ -642,18 +763,54 @@ void checkForSignals() {
  * digital reading from the RUNNING_SIGNAL pin.
  */
 void IRAM_ATTR receiveRunningSignal() {
-  runningState = digitalRead(RUNNING_SIGNAL);
-  if (runningState == HIGH) {
-    logMessage("[SIGNAL] Genset is running - signal HIGH");
-  } else {
-    logMessage("[SIGNAL] Genset is not running - signal LOW");
-  }
+  runningSignalChanged = true;
 }
 
 // Interrupt service routine to read the current state of the LED and log it.
 void IRAM_ATTR receiveLEDStatus() {
   ledState = digitalRead(LED);
-  logMessage("[LED] Current state: " + String(ledState));
+}
+
+/**
+ * This function monitors the state of the LED and logs any changes.
+ * It uses a static variable to track the last logged state of the LED.
+ * If the current state differs from the last logged state, it updates
+ * the last logged state and logs the new state to the serial console.
+ */
+
+void checkLEDStatus() {
+  static bool lastLoggedLedState = LOW;
+  
+  if (ledState != lastLoggedLedState) {
+    lastLoggedLedState = ledState;
+    logMessage("[LED] Current state: " + String(ledState));
+  }
+}
+
+void initializeStates() {
+  // Read actual pin states with debouncing
+  delay(100); // Allow pins to stabilize after boot
+  
+  // Read multiple times to ensure stable reading
+  bool startReading = LOW;
+  bool stopReading = LOW;
+  bool runningReading = LOW;
+  
+  for (int i = 0; i < 5; i++) {
+    startReading = digitalRead(START_SIGNAL);
+    stopReading = digitalRead(STOP_SIGNAL);
+    runningReading = digitalRead(RUNNING_SIGNAL);
+    delay(10);
+  }
+  
+  // Initialize global states to match actual pin states
+  lastStartState = startReading;
+  lastStopState = stopReading;
+  runningState = runningReading;
+  
+  logMessage("[INIT] Initial states - START: " + String(lastStartState) + 
+             ", STOP: " + String(lastStopState) + 
+             ", RUNNING: " + String(runningState));
 }
 
 void setup() {
@@ -676,6 +833,8 @@ void setup() {
   digitalWrite(RELAY_K1, LOW);
   digitalWrite(RELAY_K2, LOW);
   digitalWrite(LED, HIGH);
+
+  initializeStates();
 
   attachInterrupt(RUNNING_SIGNAL, receiveRunningSignal, CHANGE);
   attachInterrupt(LED, receiveLEDStatus, CHANGE);
@@ -713,6 +872,8 @@ void setup() {
   // Check for START/STOP signals every 50ms
   event_loop.onDelay(5, receiveRunningSignal);
   event_loop.onRepeat(50, checkForSignals);
+  event_loop.onRepeat(10, checkRunningSignal);
+  event_loop.onRepeat(100, checkLEDStatus);
   
   // Boot sequence, blinking the LED 3 times
   for (uint8_t i = 0; i < 5; i++) {
